@@ -222,30 +222,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupPhysics(): void {
-    if (this.athlete && this.springboard) {
-      this.physics.add.collider(
-        this.athlete,
-        this.springboard.getPhysicsObject(),
-        () => {
-          this.onAthleteCollideSpringboard();
-        },
-        undefined,
-        this
-      );
-    }
-  }
-
-  private onAthleteCollideSpringboard(): void {
-    if (this.athlete && this.athlete.getGameState() === GameState.CHARGING) {
-      if (this.springboard) {
-        this.springboard.spring(this.athlete.getChargeCount());
-      }
-
-      if (this.athlete.getChargeCount() < GAME_CONFIG.springboard.maxCharges) {
-        this.gameStateText.setText(`蓄力中... 第 ${this.athlete.getChargeCount() + 1} 次`);
-        this.updateChargeIndicator(this.athlete.getChargeCount());
-      }
-    }
   }
 
   private updateChargeIndicator(chargeCount: number): void {
