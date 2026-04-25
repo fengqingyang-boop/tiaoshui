@@ -9,15 +9,18 @@ export class Athlete extends Phaser.Physics.Arcade.Sprite {
   private bodyShape: Phaser.Geom.Rectangle;
   private headShape: Phaser.Geom.Circle;
   private rotationSpeed: number;
-  private chargingTween: Phaser.Tweens.Tween | null;
+  private chargeTween: Phaser.Tweens.Tween | null;
   private springboardY: number;
-  private chargeBounceTween: Phaser.Tweens.Tween | null;
+  private isChargingInternal: boolean;
+  private chargeBounceCount: number;
 
   constructor(scene: Phaser.Scene, x: number, y: number) {
     super(scene, x, y, '');
 
     this.springboardY = y;
-    this.chargeBounceTween = null;
+    this.chargeTween = null;
+    this.isChargingInternal = false;
+    this.chargeBounceCount = 0;
 
     this.scene.physics.world.enable(this);
     this.setImmovable(false);
@@ -50,10 +53,10 @@ export class Athlete extends Phaser.Physics.Arcade.Sprite {
 
     this.currentGameState = GameState.READY;
     this.rotationSpeed = 0;
-    this.chargingTween = null;
 
     if (this.body) {
       (this.body as Phaser.Physics.Arcade.Body).allowGravity = false;
+      this.setVelocity(0, 0);
     }
 
     this.scene.add.existing(this);
@@ -96,69 +99,78 @@ export class Athlete extends Phaser.Physics.Arcade.Sprite {
     this.playerState.isCharging = true;
     this.playerState.chargeCount = 0;
     this.playerState.jumpPower = GAME_CONFIG.athlete.jumpForce;
+    this.isChargingInternal = true;
+    this.chargeBounceCount = 0;
 
-    this.startChargingAnimation();
+    if (this.body) {
+      (this.body as Phaser.Physics.Arcade.Body).allowGravity = false;
+      this.setVelocity(0, 0);
+    }
+
+    this.startChargeBounce();
   }
 
-  private startChargingAnimation(): void {
-    if (this.chargingTween) {
-      this.chargingTween.destroy();
+  private startChargeBounce(): void {
+    if (!this.isChargingInternal) return;
+
+    this.chargeBounceCount++;
+
+    if (this.chargeBounceCount > GAME_CONFIG.springboard.maxCharges) {
+      this.stopCharging(true);
+      this.endGame();
+      return;
     }
-    if (this.chargeBounceTween) {
-      this.chargeBounceTween.destroy();
+
+    this.playerState.chargeCount = this.chargeBounceCount;
+    this.playerState.jumpPower = Math.min(
+      GAME_CONFIG.athlete.jumpForce + (this.chargeBounceCount - 1) * GAME_CONFIG.springboard.bounceForce,
+      GAME_CONFIG.athlete.maxJumpForce
+    );
+
+    const bounceHeight = 20 + (this.chargeBounceCount - 1) * 20;
+
+    if (this.chargeTween) {
+      this.chargeTween.destroy();
     }
 
-    let currentBounceHeight = 20;
-
-    const doBounce = () => {
-      if (this.currentGameState !== GameState.CHARGING) return;
-      if (this.playerState.chargeCount >= GAME_CONFIG.springboard.maxCharges) {
-        this.stopCharging(true);
-        this.endGame();
-        return;
-      }
-
-      this.playerState.chargeCount++;
-      this.playerState.jumpPower = Math.min(
-        this.playerState.jumpPower + GAME_CONFIG.springboard.bounceForce,
-        GAME_CONFIG.athlete.maxJumpForce
-      );
-
-      const bounceHeight = currentBounceHeight;
-      currentBounceHeight += 15;
-
-      this.chargingTween = this.scene.tweens.add({
-        targets: this,
-        y: this.springboardY - bounceHeight,
-        scaleY: 1.1,
-        duration: 250,
-        ease: 'Power2.out',
-        yoyo: true,
-        repeat: 0,
-        onComplete: () => {
-          if (this.currentGameState === GameState.CHARGING) {
-            this.setScale(1);
-            this.scene.time.delayedCall(100, doBounce);
-          }
-        },
-      });
-    };
-
-    this.scene.time.delayedCall(200, doBounce);
+    this.chargeTween = this.scene.tweens.add({
+      targets: this,
+      y: {
+        from: this.springboardY,
+        to: this.springboardY - bounceHeight,
+      },
+      scaleY: {
+        from: 1,
+        to: 1.1,
+      },
+      duration: 300,
+      ease: 'Sine.easeOut',
+      yoyo: true,
+      hold: 0,
+      repeat: 0,
+      onYoyo: () => {
+        this.setScale(1);
+      },
+      onComplete: () => {
+        if (this.isChargingInternal) {
+          this.scene.time.delayedCall(150, () => {
+            this.startChargeBounce();
+          });
+        }
+      },
+    });
   }
 
   public stopCharging(isGameOver: boolean = false): void {
     if (!this.playerState.isCharging) return;
 
     this.playerState.isCharging = false;
+    this.isChargingInternal = false;
 
-    if (this.chargingTween) {
-      this.chargingTween.destroy();
-      this.chargingTween = null;
-    }
-    if (this.chargeBounceTween) {
-      this.chargeBounceTween.destroy();
-      this.chargeBounceTween = null;
+    if (this.chargeTween) {
+      this.chargeTween.stop();
+      this.chargeTween.destroy();
+      this.chargeTween = null;
     }
 
     this.setScale(1);
@@ -175,14 +187,13 @@ export class Athlete extends Phaser.Physics.Arcade.Sprite {
 
     if (this.body) {
       (this.body as Phaser.Physics.Arcade.Body).allowGravity = true;
+      const launchPower = this.playerState.jumpPower;
+      const velocityY = -launchPower;
+      const velocityX = launchPower * 0.4;
+
+      this.setVelocity(velocityX, velocityY);
+      this.rotationSpeed = 270 * (this.playerState.chargeCount + 1);
     }
-
-    const launchAngle = -Math.PI / 2;
-    const velocityX = Math.cos(launchAngle) * this.playerState.jumpPower * 0.5;
-    const velocityY = -this.playerState.jumpPower;
-
-    this.setVelocity(velocityX, velocityY);
-    this.rotationSpeed = 180 * (this.playerState.chargeCount + 1);
   }
 
   public enterWater(): void {
@@ -209,6 +220,11 @@ export class Athlete extends Phaser.Physics.Arcade.Sprite {
   }
 
   public reset(): void {
+    if (this.chargeTween) {
+      this.chargeTween.destroy();
+      this.chargeTween = null;
+    }
+
     this.setPosition(this.scene.scale.width / 2, this.springboardY);
     this.setVelocity(0, 0);
     this.setAcceleration(0, 0);
@@ -225,18 +241,12 @@ export class Athlete extends Phaser.Physics.Arcade.Sprite {
 
     this.currentGameState = GameState.READY;
     this.rotationSpeed = 0;
-
-    if (this.chargingTween) {
-      this.chargingTween.destroy();
-      this.chargingTween = null;
-    }
-    if (this.chargeBounceTween) {
-      this.chargeBounceTween.destroy();
-      this.chargeBounceTween = null;
-    }
+    this.isChargingInternal = false;
+    this.chargeBounceCount = 0;
 
     if (this.body) {
       (this.body as Phaser.Physics.Arcade.Body).allowGravity = false;
+      this.setVelocity(0, 0);
     }
   }
 
@@ -260,11 +270,8 @@ export class Athlete extends Phaser.Physics.Arcade.Sprite {
     if (this.graphics) {
       this.graphics.destroy();
     }
-    if (this.chargingTween) {
-      this.chargingTween.destroy();
-    }
-    if (this.chargeBounceTween) {
-      this.chargeBounceTween.destroy();
+    if (this.chargeTween) {
+      this.chargeTween.destroy();
     }
     super.destroy(fromScene);
   }
